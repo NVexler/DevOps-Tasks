@@ -91,11 +91,28 @@ extraction_failure() {
     log_verbose "WARNING: $1" >&2
 }
 
+# Extract using stdout and overwrite the destination
+extract_stream() {
+
+    local target="$1"
+    local output="$2"
+    local command="$3"
+
+    if "$command" -c -- "$target" > "$output"; then
+        rm -- "$target"
+        extraction_success "$target"
+    else
+        rm -f -- "$output"
+        extraction_failure "Failed to decompress: $target"
+    fi
+}
+
 # Extract a single archive
 extract_archive() {
 
     local target="$1"
     local ftype
+    local output
 
     # Identify file type
     if ! ftype=$(file -b -- "$target"); then
@@ -105,53 +122,54 @@ extract_archive() {
 
     # Identify format and execute the appropriate command
     
-case "$ftype" in
+    case "$ftype" in
 
-    *gzip*)
-        if gunzip -c -- "$target" > "${target}.out"; then
-            rm -- "$target"
-            extraction_success "$target"
-        else
-            rm -f -- "${target}.out"
-            extraction_failure "Failed to decompress: $target"
-        fi
-        ;;
+        *gzip*)
+            if [[ "$target" == *.gz ]]; then
+                output="${target%.gz}"
+            else
+                output="${target}.out"
+            fi
 
-    *bzip2*)
-        if bunzip2 -c -- "$target" > "${target}.out"; then
-            rm -- "$target"
-            extraction_success "$target"
-        else
-            rm -f -- "${target}.out"
-            extraction_failure "Failed to decompress: $target"
-        fi
-        ;;
+            extract_stream "$target" "$output" gunzip
+            ;;
 
-    *Zip*archive*)
-        if unzip -o -- "$target" -d "$(dirname "$target")" >/dev/null; then
-            extraction_success "$target"
-        else
-            extraction_failure "Failed to decompress: $target"
-        fi
-        ;;
+        *bzip2*)
+            if [[ "$target" == *.bz2 ]]; then
+                output="${target%.bz2}"
+            else
+                output="${target}.out"
+            fi
 
-    *compress\'d* | *compress\ data* | *Unix\ Compress*)
-        if uncompress -c -- "$target" > "${target}.out"; then
-            rm -- "$target"
-            extraction_success "$target"
-        else
-            rm -f -- "${target}.out"
-            extraction_failure "Failed to decompress: $target"
-        fi
-        ;;
+            extract_stream "$target" "$output" bunzip2
+            ;;
 
-    *)
-        if [[ "$ftype" == *"compressed data"* ||
-              "$ftype" == *"archive data"* ]]; then
-            extraction_failure "Unsupported compression format: $target"
-        fi
-        ;;
-esac
+        *Zip*archive*)
+            if unzip -o -- "$target" -d "$(dirname "$target")" >/dev/null; then
+                rm -- "$target"
+                extraction_success "$target"
+            else
+                extraction_failure "Failed to decompress: $target"
+            fi
+            ;;
+
+        *compress\'d* | *compress\ data* | *Unix\ Compress*)
+            if [[ "$target" == *.Z ]]; then
+                output="${target%.Z}"
+            else
+                output="${target}.out"
+            fi
+
+            extract_stream "$target" "$output" uncompress
+            ;;
+
+        *)
+            if [[ "$ftype" == *"compressed data"* ||
+                  "$ftype" == *"archive data"* ]]; then
+                extraction_failure "Unsupported compression format: $target"
+            fi
+            ;;
+    esac
 }
 
 # Process a directory
