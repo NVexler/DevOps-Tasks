@@ -20,7 +20,7 @@ Jenkins was running locally on the Ubuntu virtual machine, making it inaccessibl
 
 Therefore, an actual GitLab webhook could not be configured.
 
-Instead, the webhook endpoint was tested manually using curl, simulating a webhook request with JSON payload containing commit information.
+Instead, the webhook endpoint was tested manually using curl, simulating a webhook request. 
 
 ## Screenshots
 
