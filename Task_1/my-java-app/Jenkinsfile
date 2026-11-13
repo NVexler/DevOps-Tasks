@@ -1,0 +1,150 @@
+
+@Library('my-shared-library') _
+
+pipeline {
+
+    agent any
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        skipDefaultCheckout(true)
+        gitLabConnection('gitlab')
+    }
+
+    tools {
+        jdk 'JDK17'
+        maven 'Maven3'
+    }
+
+    // GitLab Push Webhook
+    triggers {
+        gitlab(
+            triggerOnPush: true,
+            triggerOnMergeRequest: false,
+            branchFilterType: 'NameBasedFilter',
+            includeBranchesSpec: 'main'
+        )
+    }
+
+    environment {
+        NEXUS_RAW_URL = 'https://nexus.example.com/repository/raw-releases'
+    }
+
+    stages {
+
+        // 1. Checkout source code
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        // 2. Extract SCM information
+        stage('Prepare Environment') {
+            steps {
+                script {
+
+                    def scmInfo = prepareEnv([
+                        branch: env.gitlabBranch,
+                        triggeredBy: env.gitlabUserName,
+                        webhookCommit: env.gitlabAfter
+                    ])
+
+                    echo "Committer: ${scmInfo.committer}"
+                    echo "Triggered by: ${scmInfo.triggeredBy}"
+                    echo "Commit ID: ${scmInfo.commitId}"
+                    echo "Branch: ${scmInfo.branch}"
+                }
+            }
+        }
+
+        // 3. Build Java application
+        stage('Build') {
+            steps {
+                echo 'Building Maven application...'
+
+                sh 'mvn -B clean package'
+            }
+        }
+
+        // 4. Package JAR into tar.gz
+        stage('Package Artifact') {
+            steps {
+                script {
+
+                    def artifactPath = sh(
+                        script: "find target -maxdepth 1 -type f -name '*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' | sort | head -n 1",
+                        returnStdout: true
+                    ).trim()
+
+                    if (!artifactPath) {
+                        error 'No JAR artifact found in target/'
+                    }
+
+                    def jarName = artifactPath.tokenize('/').last()
+
+                    env.ARTIFACT_NAME =
+                        "my-app-${BUILD_NUMBER}.tar.gz"
+
+                    sh """
+                        tar -czf '${env.ARTIFACT_NAME}' \
+                            -C target '${jarName}'
+                    """
+
+                    archiveArtifacts(
+                        artifacts: env.ARTIFACT_NAME,
+                        fingerprint: true
+                    )
+
+                    echo "Created artifact: ${env.ARTIFACT_NAME}"
+                }
+            }
+        }
+
+        // 5. Upload to Nexus
+        stage('Upload to Nexus') {
+            steps {
+
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'nexus-credentials',
+                        usernameVariable: 'NEXUS_USER',
+                        passwordVariable: 'NEXUS_PASSWORD'
+                    )
+                ]) {
+
+                    sh '''
+                        set +x
+
+                        curl --fail --silent --show-error \
+                            --user "$NEXUS_USER:$NEXUS_PASSWORD" \
+                            --upload-file "$ARTIFACT_NAME" \
+                            "$NEXUS_RAW_URL/$ARTIFACT_NAME"
+                    '''
+                }
+
+                echo "Artifact uploaded to Nexus!"
+            }
+        }
+    }
+
+    post {
+
+        success {
+            echo 'Pipeline completed successfully!'
+            echo "Committer: ${env.COMMITTED_BY}"
+            echo "Commit: ${env.COMMIT_HASH}"
+        }
+
+        failure {
+            echo 'Pipeline failed!'
+            echo "Commit: ${env.COMMIT_HASH ?: 'Unknown'}"
+        }
+
+        always {
+            echo "Build number: ${BUILD_NUMBER}"
+            echo "Build status: ${currentBuild.currentResult}"
+        }
+    }
+}
