@@ -18,8 +18,11 @@
     - name: Install Docker and Docker Compose
       ansible.builtin.apt:
         name:
-          - docker.io
-          - docker-compose-v2
+           - docker-ce
+           - docker-ce-cli
+           - containerd.io
+           - docker-buildx-plugin
+           - docker-compose-plugin
         state: present
 
     - name: Ensure Docker is running and enabled
@@ -45,8 +48,7 @@
         project_src: "{{ app_dir }}"
         state: present
         build: always
-        wait: true
-        wait_timeout: 120
+        timeout: 120
 
     - name: Verify web application
       ansible.builtin.uri:
